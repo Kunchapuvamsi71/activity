@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garmin PAI Dashboard</title>
+<style>
+  :root {
+    --bg: #f5f7fa; --card: #ffffff; --text: #1c2430; --muted: #6b7686;
+    --border: #e2e7ee; --accent: #2563eb; --grid: #e6eaf0; --ok: #15803d; --err: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #93a0b2;
+      --border: #263140; --accent: #60a5fa; --grid: #263140; --ok: #4ade80; --err: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { padding: 20px 24px 4px; }
+  h1 { margin: 0; font-size: 22px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 16px 24px 40px; max-width: 1100px; margin: 0 auto; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .stat .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  h2 { margin: 0 0 8px; font-size: 15px; }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { fill: var(--muted); font-size: 11px; }
+  svg .grid { stroke: var(--grid); stroke-width: 1; }
+  svg .val { fill: var(--text); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  form { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; align-items: end; }
+  label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 3px; }
+  input { font: inherit; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px;
+          background: var(--bg); color: var(--text); width: 100%; }
+  button { font: inherit; padding: 8px 14px; border: 0; border-radius: 6px; cursor: pointer;
+           background: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: default; }
+  #msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Garmin PAI Dashboard</h1>
+  <div class="sub">Physical Activity Index per subject &middot; <a href="/docs" style="color:var(--accent)">API docs</a></div>
+</header>
+<main>
+  <section class="stats">
+    <div class="card stat"><div class="label">Readings</div><div class="value" id="s-total">–</div></div>
+    <div class="card stat"><div class="label">Subjects</div><div class="value" id="s-subjects">–</div></div>
+    <div class="card stat"><div class="label">Overall avg PAI</div><div class="value" id="s-avg">–</div></div>
+    <div class="card stat"><div class="label">Steps vs active min (r)</div><div class="value" id="s-corr">–</div></div>
+  </section>
+
+  <section class="grid2">
+    <div class="card"><h2>Average PAI per subject</h2><div id="bar"></div></div>
+    <div class="card"><h2>PAI over time</h2><div id="line"></div><div class="legend" id="legend"></div></div>
+  </section>
+
+  <section class="card" style="margin-bottom:16px">
+    <h2>Send a reading</h2>
+    <form id="form">
+      <label>Subject<input name="subject_id" value="n.1" required></label>
+      <label>Date<input name="date" type="date"></label>
+      <label>Steps<input name="steps" type="number" min="0" value="12500" required></label>
+      <label>Floors<input name="floors" type="number" min="0" value="12" required></label>
+      <label>Intensity min (weekly avg)<input name="intensity_mins_weekly_avg" type="number" min="0" value="400" required></label>
+      <label>PAL<input name="pal" type="number" min="0" step="0.01" value="1.9" required></label>
+      <label>Active min<input name="active_mins" type="number" min="0" value="135" required></label>
+      <button type="submit" id="send">Send</button>
+    </form>
+    <div id="msg"></div>
+  </section>
+
+  <section class="card">
+    <h2>Recent readings</h2>
+    <div class="scroll" id="recent"></div>
+  </section>
+</main>
+
+<script>
+const COLORS = ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#9333ea", "#0891b2", "#be185d", "#4d7c0f"];
+const NS = "http://www.w3.org/2000/svg";
+const $ = (id) => document.getElementById(id);
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function barChart(subjects) {
+  if (!subjects.length) return '<div class="empty">No data yet</div>';
+  const W = 560, H = 300, L = 40, R = 10, T = 14, B = 30;
+  const pw = W - L - R, ph = H - T - B;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Average PAI per subject">`;
+  for (let v = 0; v <= 100; v += 25) {
+    const y = T + ph - (v / 100) * ph;
+    s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/><text x="${L - 6}" y="${y + 4}" text-anchor="end">${v}</text>`;
+  }
+  const slot = pw / subjects.length, bw = Math.min(54, slot * 0.6);
+  subjects.forEach((d, i) => {
+    const h = (d.avg_pai / 100) * ph, x = L + slot * i + (slot - bw) / 2, y = T + ph - h;
+    s += `<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="3" fill="${COLORS[i % COLORS.length]}"/>`;
+    s += `<text class="val" x="${x + bw / 2}" y="${y - 5}" text-anchor="middle">${d.avg_pai.toFixed(1)}</text>`;
+    s += `<text x="${x + bw / 2}" y="${H - 10}" text-anchor="middle">${esc(d.subject_id)}</text>`;
+  });
+  return s + "</svg>";
+}
+
+function lineChart(series, ids) {
+  const all = ids.flatMap((id) => series[id]);
+  if (!all.length) return '<div class="empty">No data yet</div>';
+  const W = 560, H = 300, L = 40, R = 14, T = 14, B = 30;
+  const pw = W - L - R, ph = H - T - B;
+  const t = (d) => new Date(d).getTime();
+  const times = all.map((p) => t(p.date)), t0 = Math.min(...times), t1 = Math.max(...times);
+  const lo = Math.max(0, Math.floor((Math.min(...all.map((p) => p.pai)) - 5) / 10) * 10), hi = 100;
+  const X = (d) => L + (t1 === t0 ? pw / 2 : ((t(d) - t0) / (t1 - t0)) * pw);
+  const Y = (v) => T + ph - ((v - lo) / (hi - lo)) * ph;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="PAI over time">`;
+  for (let v = lo; v <= hi; v += 10) {
+    s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
+  }
+  const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+  s += `<text x="${L}" y="${H - 8}">${fmt(t0)}</text><text x="${W - R}" y="${H - 8}" text-anchor="end">${fmt(t1)}</text>`;
+  ids.forEach((id, i) => {
+    const c = COLORS[i % COLORS.length];
+    const pts = series[id].map((p) => `${X(p.date).toFixed(1)},${Y(p.pai).toFixed(1)}`).join(" ");
+    s += `<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.8" stroke-linejoin="round"/>`;
+    series[id].forEach((p) => { s += `<circle cx="${X(p.date).toFixed(1)}" cy="${Y(p.pai).toFixed(1)}" r="2.2" fill="${c}"/>`; });
+  });
+  return s + "</svg>";
+}
+
+function recentTable(rows) {
+  if (!rows.length) return '<div class="empty">No readings yet. Send one above or run <code>python -m app.bulk_data</code>.</div>';
+  const head = ["Subject", "Date", "Steps", "Floors", "Intensity", "PAL", "Active min", "PAI %"];
+  let s = "<table><thead><tr>" + head.map((h) => `<th>${h}</th>`).join("") + "</tr></thead><tbody>";
+  rows.forEach((r) => {
+    s += `<tr><td>${esc(r.subject_id)}</td><td>${esc(r.date)}</td><td>${r.steps}</td><td>${r.floors}</td>` +
+         `<td>${r.intensity_mins_weekly_avg}</td><td>${r.pal}</td><td>${r.active_mins}</td><td><b>${r.pai_score.toFixed(2)}</b></td></tr>`;
+  });
+  return s + "</tbody></table>";
+}
+
+async function load() {
+  try {
+    const res = await fetch("/api/summary");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const d = await res.json();
+    const ids = d.subjects.map((x) => x.subject_id);
+    $("s-total").textContent = d.total;
+    $("s-subjects").textContent = ids.length;
+    $("s-avg").textContent = d.overall_avg_pai == null ? "–" : d.overall_avg_pai.toFixed(1) + "%";
+    $("s-corr").textContent = d.correlation_steps_active == null ? "–" : d.correlation_steps_active.toFixed(3);
+    $("bar").innerHTML = barChart(d.subjects);
+    $("line").innerHTML = lineChart(d.series, ids);
+    $("legend").innerHTML = ids.map((id, i) => `<span><i style="background:${COLORS[i % COLORS.length]}"></i>${esc(id)}</span>`).join("");
+    $("recent").innerHTML = recentTable(d.recent);
+  } catch (e) {
+    $("recent").innerHTML = `<div class="empty">Could not load data: ${esc(e.message)}</div>`;
+  }
+}
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = new FormData(ev.target), body = {};
+  for (const [k, v] of f.entries()) {
+    if (k === "date") { if (v) body.date = v; }
+    else if (k === "subject_id") body[k] = v.trim();
+    else body[k] = k === "pal" ? parseFloat(v) : parseInt(v, 10);
+  }
+  const btn = $("send"), msg = $("msg");
+  btn.disabled = true; msg.style.color = "var(--muted)"; msg.textContent = "Sending...";
+  try {
+    const res = await fetch("/garmin-webhook", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error("Server returned " + res.status);
+    const out = await res.json();
+    msg.style.color = "var(--ok)"; msg.textContent = "Saved. Calculated PAI: " + out.calculated_pai + "%";
+    load();
+  } catch (e) {
+    msg.style.color = "var(--err)"; msg.textContent = "Failed: " + e.message;
+  } finally { btn.disabled = false; }
+});
+
+load();
+</script>
+</body>
+</html>
